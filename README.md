@@ -1,17 +1,25 @@
-This repository contains my capstone work on 3D reconstruction from multiple 2D images. The project focuses on understanding the core ideas from Multiple View Geometry and implementing small experiments that connect the theory to actual image data. The main experiments include estimating a fundamental matrix from manually selected correspondences, computing a camera calibration matrix, and recovering planar homographies using real images. All scripts are self-contained and meant to be run directly.
+This repository contains my capstone work on 3D reconstruction from multiple 2D images. The project focuses on connecting the theory from *Multiple View Geometry* with practical experiments using real image data. The main components include fundamental matrix estimation, calibration matrix recovery, and homography computation. All scripts are self-contained and can be run directly.
 
-Included in this repository:
+## Structure and Usage
 
-Code for collecting point correspondences from stereo image pairs
+- **`collect_points.py`**  
+  Opens two images and lets you manually pick corresponding points. Saves the selected points to a `.npy` file.
 
-Fundamental matrix estimation (normalized 8-point algorithm)
+- **`visualize_correspondences.py`**  
+  Loads the saved `.npy` file and visualizes the correspondences across the stereo pair.
 
-Calibration matrix estimation + refinement
+- **`estimate_fundamental_and_K.py`**  
+  Computes the fundamental matrix using the normalized 8-point algorithm and estimates the calibration matrix \(K\).
 
-Homography estimation using DLT and OpenCV
+- **`compare_with_ground_truth_E.py`**  
+  Uses the provided ground-truth \(K\) values to compute the essential matrix and compare it with the estimated version.
 
-Visualizations for checking alignment and warp quality
+- **`refine_K_from_F.py`**  
+  Performs nonlinear optimization to refine the calibration matrix using the structure of the essential matrix.
 
-A written report summarizing the theory and experiments
+- **`homography_checkerboard.py`**  
+  Detects checkerboard corners, computes homographies using both DLT and OpenCV, and visualizes the planar alignment.
 
-To run the experiments, place your images in the specified folders and execute the corresponding Python scripts. Each script prints results to the console and saves output files where needed.
+Place your images in the `img_stereo/` and `img_homo/` folders before running the scripts. Each script prints numerical results to the console and saves output files when needed.
+
+This work forms the basis for my thesis, where I plan to continue exploring stereo reconstruction, planar geometry, and camera pose recovery.
