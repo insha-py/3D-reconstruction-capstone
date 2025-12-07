@@ -1,0 +1,179 @@
+import numpy as np
+import cv2
+import os
+
+from scipy.optimize import minimize
+
+
+def build_K(f, cx, cy):
+    """
+    Construct intrinsic matrix K from scalar focal length f
+    and principal point (cx, cy).
+    """
+    return np.array([
+        [f,   0, cx],
+        [0,   f, cy],
+        [0,   0,  1]
+    ], dtype=float)
+
+
+def essential_cost_from_F_and_K(F, K):
+    """
+    Given a fundamental matrix F and an intrinsic matrix K (assumed same for
+    both cameras), compute the essential matrix E = K^T F K and return
+    a cost that measures how close E is to a valid essential matrix.
+
+    For a valid essential matrix, singular values should be (s, s, 0).
+    We use:
+        cost_E = (s1 - s2)^2 + s3^2
+    where s1 >= s2 >= s3 are the singular values of E.
+    """
+    E = K.T @ F @ K
+    U, S, Vt = np.linalg.svd(E)
+    # S[0] >= S[1] >= S[2]
+    cost_E = (S[0] - S[1])**2 + (S[2])**2
+    return cost_E, S
+
+
+def main():
+    # -------------------
+    # 1. Load data
+    # -------------------
+    F_file = "F_est.npy"
+    left_img_path = "left.png"
+    K_est_file = "K_est.npy"
+
+    if not os.path.exists(F_file):
+        raise FileNotFoundError(f"Could not find '{F_file}'. Run estimate_F_and_K.py first.")
+
+    F = np.load(F_file)
+    print("Loaded F_est.npy")
+    print("F =")
+    print(F)
+
+    left = cv2.imread(left_img_path, cv2.IMREAD_GRAYSCALE)
+    if left is None:
+        raise FileNotFoundError(f"Could not load left image from '{left_img_path}'")
+
+    h, w = left.shape[:2]
+    print(f"\nLeft image size: width={w}, height={h}")
+
+    # Principal point prior (image center)
+    cx_prior = w / 2.0
+    cy_prior = h / 2.0
+
+    # -------------------
+    # 2. Initial guess for (f, cx, cy)
+    # -------------------
+    if os.path.exists(K_est_file):
+        K_init = np.load(K_est_file)
+        print("\nFound K_est.npy, using it as initial guess.")
+        f_init = (K_init[0, 0] + K_init[1, 1]) / 2.0
+        cx_init = K_init[0, 2]
+        cy_init = K_init[1, 2]
+    else:
+        print("\nK_est.npy not found, using a rough initial guess.")
+        f_init = 1000.0
+        cx_init = cx_prior
+        cy_init = cy_prior
+
+    print(f"Initial guess: f={f_init:.3f}, cx={cx_init:.3f}, cy={cy_init:.3f}")
+
+    # -------------------
+    # 3. Define optimization objective
+    # -------------------
+    # Weight for principal point prior term.
+    # We keep this small so essential-structure dominates but prior still nudges cx,cy.
+    lambda_c = 1e-5
+
+    def objective(params):
+        """
+        params: [f, cx, cy]
+        Returns scalar cost combining:
+          - essential-structure cost
+          - principal point prior cost
+        """
+        f, cx, cy = params
+
+        # Prevent negative or extremely small focal lengths during optimization
+        if f <= 0:
+            return 1e9
+
+        K = build_K(f, cx, cy)
+        cost_E, S = essential_cost_from_F_and_K(F, K)
+
+        # Prior: principal point near image center
+        cost_c = (cx - cx_prior)**2 + (cy - cy_prior)**2
+
+        total_cost = cost_E + lambda_c * cost_c
+        return total_cost
+
+    # -------------------
+    # 4. Run optimization over (f, cx, cy)
+    # -------------------
+    x0 = np.array([f_init, cx_init, cy_init], dtype=float)
+
+    # Bounds: keep focal positive and principal point roughly within the image
+    # You can widen/narrow these if needed.
+    bounds = [
+        (200.0, 5000.0),            # f
+        (w * 0.2, w * 0.8),         # cx
+        (h * 0.2, h * 0.8)          # cy
+    ]
+
+    print("\nStarting optimization (this may take a moment)...")
+
+    res = minimize(
+        objective,
+        x0,
+        method="L-BFGS-B",
+        bounds=bounds,
+        options={"maxiter": 200, "ftol": 1e-9}
+    )
+
+    print("\nOptimization result:")
+    print(res)
+
+    f_opt, cx_opt, cy_opt = res.x
+    print(f"\nRefined parameters:")
+    print(f"  f  = {f_opt:.6f}")
+    print(f"  cx = {cx_opt:.6f}")
+    print(f"  cy = {cy_opt:.6f}")
+
+    # Build refined K
+    K_refined = build_K(f_opt, cx_opt, cy_opt)
+    print("\nRefined K:")
+    print(K_refined)
+
+    # Compute and print costs / singular values for initial and refined K
+    print("\nComparing initial and refined K in terms of essential-structure cost...")
+
+    K_init_full = build_K(f_init, cx_init, cy_init)
+    cost_E_init, S_init = essential_cost_from_F_and_K(F, K_init_full)
+    cost_E_opt, S_opt = essential_cost_from_F_and_K(F, K_refined)
+
+    print("\nInitial K:")
+    print(K_init_full)
+    print("  Singular values of E_init:", S_init)
+    print(f"  Essential-structure cost (init): {cost_E_init:.6e}")
+
+    print("\nRefined K:")
+    print(K_refined)
+    print("  Singular values of E_refined:", S_opt)
+    print(f"  Essential-structure cost (refined): {cost_E_opt:.6e}")
+
+    # -------------------
+    # 5. Save refined K
+    # -------------------
+    np.save("K_refined.npy", K_refined)
+    print("\nSaved refined K to 'K_refined.npy'.")
+
+    # (Optional) If you want to see how close we are to ground truth for Rig A, you
+    # can manually compare with:
+    # K_gt = [[1758.23,    0,   872.36],
+    #         [   0,   1758.23, 552.32],
+    #         [   0,        0,      1 ]]
+
+
+if __name__ == "__main__":
+    main()
